@@ -53,7 +53,7 @@ contract("SubscriptionContract", async ACCOUNTS => {
 
       it("should return correct Subscription Hash", async () => {
         // we use 'result' because the contract address is different each test, and result allow us to see if the subscriptionHash is reproduceable
-        let result = await instance.getSubscriptionHash.call(USER_2, USER_1, DAI, PAYMENT, PERIOD, GASPRICE)
-        assert.equal(await instance.getSubscriptionHash.call(USER_2, USER_1, DAI, PAYMENT, PERIOD, GASPRICE), result);
+        let result = await instance.getSubscriptionHash.call(USER_2, USER_1, DAI, PAYMENT, PERIOD, GASPRICE, 1)
+        assert.equal(await instance.getSubscriptionHash.call(USER_2, USER_1, DAI, PAYMENT, PERIOD, GASPRICE, 1), result);
       });
 });
