@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity ^0.5.2;
 
 /*
   Super Simple Token Subscriptions - https://tokensubscription.com
@@ -34,6 +34,9 @@ contract Subscription {
     //who deploys the contract
     address public author;
 
+    //restrict who can relay the metatx
+    address public relayer;
+
     // the publisher may optionally deploy requirements for the subscription
     // so only meta transactions that match the requirements can be relayed
     address public requiredToAddress;
@@ -47,7 +50,8 @@ contract Subscription {
         address _tokenAddress,
         uint256 _tokenAmount,
         uint256 _periodSeconds,
-        uint256 _gasPrice
+        uint256 _gasPrice,
+        address _relayer
     ) public {
         requiredToAddress=_toAddress;
         requiredTokenAddress=_tokenAddress;
@@ -55,6 +59,7 @@ contract Subscription {
         requiredPeriodSeconds=_periodSeconds;
         requiredGasPrice=_gasPrice;
         author=msg.sender;
+        relayer=_relayer;
     }
 
     event ExecuteSubscription(
@@ -119,7 +124,7 @@ contract Subscription {
     //ecrecover the signer from hash and the signature
     function getSubscriptionSigner(
         bytes32 subscriptionHash, //hash of subscription
-        bytes signature //proof the subscriber signed the meta trasaction
+        bytes memory signature //proof the subscriber signed the meta trasaction
     )
         public
         pure
@@ -137,7 +142,7 @@ contract Subscription {
         uint256 tokenAmount, //the token amount paid to the publisher
         uint256 periodSeconds, //the period in seconds between payments
         uint256 gasPrice, //the amount of the token to incentivize the relay network
-        bytes signature //proof the subscriber signed the meta trasaction
+        bytes memory signature //proof the subscriber signed the meta trasaction
     )
         public
         view
@@ -168,7 +173,7 @@ contract Subscription {
         uint256 tokenAmount, //the token amount paid to the publisher
         uint256 periodSeconds, //the period in seconds between payments
         uint256 gasPrice, //the amount of tokens or eth to pay relayer (0 for free)
-        bytes signature //proof the subscriber signed the meta trasaction
+        bytes memory signature //proof the subscriber signed the meta trasaction
     )
         public
         returns (bool success)
@@ -197,11 +202,12 @@ contract Subscription {
         uint256 tokenAmount, //the token amount paid to the publisher
         uint256 periodSeconds, //the period in seconds between payments
         uint256 gasPrice, //the amount of tokens or eth to pay relayer (0 for free)
-        bytes signature //proof the subscriber signed the meta trasaction
+        bytes memory signature //proof the subscriber signed the meta trasaction
     )
         public
         returns (bool success)
     {
+        require(msg.sender == relayer);
         // make sure the subscription is valid and ready
         // pulled this out so I have the hash, should be exact code as "isSubscriptionReady"
         bytes32 subscriptionHash = getSubscriptionHash(
