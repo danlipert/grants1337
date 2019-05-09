@@ -2,11 +2,8 @@ pragma solidity ^0.5.2;
 
 /*
   Super Simple Token Subscriptions - https://tokensubscription.com
-
   //// Breakin’ Through @ University of Wyoming ////
-
   Austin Thomas Griffith - https://austingriffith.com
-
   Building on previous works:
     https://github.com/austintgriffith/token-subscription
     https://gist.github.com/androolloyd/0a62ef48887be00a5eff5c17f2be849a
@@ -15,10 +12,8 @@ pragma solidity ^0.5.2;
     https://github.com/ethereum/EIPs/pull/1337
     https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1077.md
     https://github.com/gnosis/safe-contracts
-
   Earlier Meta Transaction Demo:
     https://github.com/austintgriffith/bouncer-proxy
-
   Huge thanks, as always, to OpenZeppelin for the rad contracts:
  */
 
@@ -32,7 +27,7 @@ contract Subscription {
     using SafeMath for uint256;
 
     //who deploys the contract
-    address public author;
+    address payable public author;
 
     //restrict who can relay the metatx
     address public relayer;
@@ -45,22 +40,11 @@ contract Subscription {
     uint256 public requiredPeriodSeconds;
     uint256 public requiredGasPrice;
 
-    constructor(
-        address _toAddress,
-        address _tokenAddress,
-        uint256 _tokenAmount,
-        uint256 _periodSeconds,
-        uint256 _gasPrice,
-        address _relayer
-    ) public {
-        requiredToAddress=_toAddress;
-        requiredTokenAddress=_tokenAddress;
-        requiredTokenAmount=_tokenAmount;
-        requiredPeriodSeconds=_periodSeconds;
-        requiredGasPrice=_gasPrice;
-        author=msg.sender;
-        relayer=_relayer;
-    }
+
+    // similar to a nonce that avoids replay attacks this allows a single execution
+    // every x seconds for a given subscription
+    // subscriptionHash  => next valid block number
+    mapping(bytes32 => uint256) public nextValidTimestamp;
 
     event ExecuteSubscription(
         address indexed from, //the subscriber
@@ -71,10 +55,32 @@ contract Subscription {
         uint256 gasPrice //the amount of tokens to pay relayer (0 for free)
     );
 
-    // similar to a nonce that avoids replay attacks this allows a single execution
-    // every x seconds for a given subscription
-    // subscriptionHash  => next valid block number
-    mapping(bytes32 => uint256) public nextValidTimestamp;
+    event CancelSubscription(
+        address indexed from, //the subscriber
+        address indexed to, //the publisher
+        address tokenAddress, //the token address paid to the publisher
+        uint256 tokenAmount, //the token amount paid to the publisher
+        uint256 periodSeconds, //the period in seconds between payments
+        uint256 gasPrice //the amount of tokens to pay relayer (0 for free)
+    );
+
+    constructor(
+        address _toAddress,
+        address _tokenAddress,
+        uint256 _tokenAmount,
+        uint256 _periodSeconds,
+        uint256 _gasPrice,
+        uint8 _version,
+        address _relayer
+    ) public {
+        requiredToAddress=_toAddress;
+        requiredTokenAddress=_tokenAddress;
+        requiredTokenAmount=_tokenAmount;
+        requiredPeriodSeconds=_periodSeconds;
+        requiredGasPrice=_gasPrice;
+        author=msg.sender;
+        relayer=_relayer;
+    }
 
     // this is used by external smart contracts to verify on-chain that a
     // particular subscription is "paid" and "active"
@@ -88,6 +94,9 @@ contract Subscription {
         view
         returns (bool)
     {
+        if(nextValidTimestamp[subscriptionHash]==uint256(-1)){
+          return false;
+        }
         return (block.timestamp <=
                 nextValidTimestamp[subscriptionHash].add(gracePeriodSeconds)
         );
@@ -107,6 +116,14 @@ contract Subscription {
         view
         returns (bytes32)
     {
+        // if there are requirements from the deployer, let's make sure
+        // those are met exactly
+        require( requiredToAddress == address(0) || to == requiredToAddress, "requiredToAddress Failure" );
+        require( requiredTokenAddress == address(0) || tokenAddress == requiredTokenAddress, "requiredTokenAddress Failure"  );
+        require( requiredTokenAmount == 0 || tokenAmount == requiredTokenAmount, "requiredTokenAmount Failure"  );
+        require( requiredPeriodSeconds == 0 || periodSeconds == requiredPeriodSeconds, "requiredPeriodSeconds Failure"  );
+        require( requiredGasPrice == 0 || gasPrice == requiredGasPrice, "requiredGasPrice Failure"  );
+
         return keccak256(
             abi.encodePacked(
                 byte(0x19),
@@ -154,6 +171,7 @@ contract Subscription {
         address signer = getSubscriptionSigner(subscriptionHash, signature);
         uint256 allowance = ERC20(tokenAddress).allowance(from, address(this));
         uint256 balance = ERC20(tokenAddress).balanceOf(from);
+
         return (
             signer == from &&
             from != to &&
@@ -181,14 +199,21 @@ contract Subscription {
         bytes32 subscriptionHash = getSubscriptionHash(
             from, to, tokenAddress, tokenAmount, periodSeconds, gasPrice
         );
-        address signer = subscriptionHash.toEthSignedMessageHash().recover(signature);
+        address signer = getSubscriptionSigner(subscriptionHash, signature);
 
         //the signature must be valid
         require(signer == from, "Invalid Signature for subscription cancellation");
 
+        //make sure it's the subscriber
+        require(from == msg.sender, 'msg.sender is not the subscriber');
+
         //nextValidTimestamp should be a timestamp that will never
         //be reached during the brief window human existence
         nextValidTimestamp[subscriptionHash]=uint256(-1);
+
+        emit CancelSubscription(
+            from, to, tokenAddress, tokenAmount, periodSeconds, gasPrice
+        );
 
         return true;
     }
@@ -208,42 +233,29 @@ contract Subscription {
         returns (bool success)
     {
         require(msg.sender == relayer);
-        // make sure the subscription is valid and ready
-        // pulled this out so I have the hash, should be exact code as "isSubscriptionReady"
         bytes32 subscriptionHash = getSubscriptionHash(
             from, to, tokenAddress, tokenAmount, periodSeconds, gasPrice
         );
-        address signer = getSubscriptionSigner(subscriptionHash, signature);
 
-        //the signature must be valid
-        require(signer == from, "Invalid Signature");
-        //timestamp must be equal to or past the next period
-        require(
-            block.timestamp >= nextValidTimestamp[subscriptionHash],
-            "Subscription is not ready"
-        );
-
-        // if there are requirements from the deployer, let's make sure
-        // those are met exactly
-        require( requiredToAddress == address(0) || to == requiredToAddress );
-        require( requiredTokenAddress == address(0) || tokenAddress == requiredTokenAddress );
-        require( requiredTokenAmount == 0 || tokenAmount == requiredTokenAmount );
-        require( requiredPeriodSeconds == 0 || periodSeconds == requiredPeriodSeconds );
-        require( requiredGasPrice == 0 || gasPrice == requiredGasPrice );
+        // make sure the subscription is valid and ready
+        require( isSubscriptionReady(from, to, tokenAddress, tokenAmount, periodSeconds, gasPrice, signature), "Subscription is not ready or conditions of transction are not met" );
 
         //increment the timestamp by the period so it wont be valid until then
         nextValidTimestamp[subscriptionHash] = block.timestamp.add(periodSeconds);
 
         // now, let make the transfer from the subscriber to the publisher
         uint256 startingBalance = ERC20(tokenAddress).balanceOf(to);
-        require(
-          ERC20(tokenAddress).transferFrom(from,to,tokenAmount),
-          "Transfer Failed"
-        );
+        ERC20(tokenAddress).transferFrom(from,to,tokenAmount);
         require(
           (startingBalance+tokenAmount) == ERC20(tokenAddress).balanceOf(to),
-          "Crappy ERC20 is a bad kitty."
+          "ERC20 Balance did not change correctly"
         );
+
+        require(
+          checkSuccess(),
+          "Subscription::executeSubscription TransferFrom failed"
+          );
+
 
         emit ExecuteSubscription(
             from, to, tokenAddress, tokenAmount, periodSeconds, gasPrice
@@ -261,13 +273,68 @@ contract Subscription {
             // this must all be setup in the constructor
             // if not, the subscriber chooses all the params including what goes
             // to the publisher and what goes to the relayer
-
+            ERC20(tokenAddress).transferFrom(from, msg.sender, gasPrice);
             require(
-                ERC20(tokenAddress).transferFrom(from, msg.sender, gasPrice),
-                "Failed to pay gas as from account"
+                checkSuccess(),
+                "Subscription::executeSubscription Failed to pay gas as from account"
             );
         }
 
         return true;
+    }
+
+    // because of issues with non-standard erc20s the transferFrom can always return false
+    // to fix this we run it and then check the return of the previous function:
+    //    https://github.com/ethereum/solidity/issues/4116
+    /**
+     * Checks the return value of the previous function. Returns true if the previous function
+     * function returned 32 non-zero bytes or returned zero bytes.
+     */
+    function checkSuccess(
+    )
+        private
+        pure
+        returns (bool)
+    {
+        uint256 returnValue = 0;
+
+        /* solium-disable-next-line security/no-inline-assembly */
+        assembly {
+            // check number of bytes returned from last function call
+            switch returndatasize
+
+            // no bytes returned: assume success
+            case 0x0 {
+                returnValue := 1
+            }
+
+            // 32 bytes returned: check if non-zero
+            case 0x20 {
+                // copy 32 bytes into scratch space
+                returndatacopy(0x0, 0x0, 0x20)
+
+                // load those bytes into returnValue
+                returnValue := mload(0x0)
+            }
+
+            // not sure what was returned: dont mark as success
+            default { }
+        }
+
+        return returnValue != 0;
+    }
+
+    //we would like a way for the author to completly destroy the subscription
+    // contract to prevent further transfers
+    function endContract()
+        external
+    {
+      require(msg.sender==author);
+      selfdestruct(author);
+    }
+
+    // let's go ahead and revert any ETH sent directly to the contract
+    function () external payable {
+       revert ();
     }
 }
