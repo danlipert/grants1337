@@ -19,6 +19,7 @@ contract("SubscriptionContract", async ACCOUNTS => {
     const PERIOD = 2592000;
     const PAYMENT = 10;
     const GASPRICE = 1;
+    const VERSION = 2;
 
     let instance;
 
@@ -26,7 +27,7 @@ contract("SubscriptionContract", async ACCOUNTS => {
 
     const deploySubscriptionContract = async () => {
         instance =
-            await SubscriptionContract.new(USER_1, DAI, PAYMENT, PERIOD, GASPRICE, USER_1, { from: OWNER, gas: 40000000 });
+            await SubscriptionContract.new(USER_1, DAI, PAYMENT, PERIOD, GASPRICE, VERSION, USER_1, { from: OWNER, gas: 40000000 });
     };
 
       it("should return correct requiredToAddress", async () => {
